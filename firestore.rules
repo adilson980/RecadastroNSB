@@ -20,23 +20,13 @@ service cloud.firestore {
     }
 
     match /app_settings/{document} {
-      allow read: if isSignedIn();
+      allow read: if true;
       allow write: if isSignedIn() && request.auth.token.email == 'j.adilson_bezerra@hotmail.com';
     }
 
     match /registrations/{cpf} {
-      // Must be authenticated to read the list or specific registrations
-      allow read: if isSignedIn();
-      
-      allow create: if isSignedIn() 
-                    && isValidCpfId(cpf) 
-                    && isValidRegistration(incoming());
-      
-      allow update: if isSignedIn()
-                    && isValidCpfId(cpf)
-                    && isValidRegistration(incoming());
-      
-      allow delete: if isSignedIn();
+      // Allow public read/write for normal users
+      allow read, write: if true;
     }
   }
 }

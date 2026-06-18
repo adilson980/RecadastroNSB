@@ -89,8 +89,6 @@ export default function App() {
 
   // Listen to Firestore real-time updates
   useEffect(() => {
-    if (!user) return;
-
     // Subscribe to registrations
     const unsubRegistrations = onSnapshot(
       collection(db, "registrations"),
@@ -190,8 +188,8 @@ export default function App() {
     updatedRows.splice(absoluteIndex, 1);
     setDatabase((prev) => ({ ...prev, rows: updatedRows }));
 
-    // Cloud delete optionally
-    if (user && cpfValue) {
+    // Cloud delete
+    if (cpfValue) {
       try {
         await deleteDoc(doc(db, "registrations", cpfValue));
       } catch (e: any) {
@@ -230,30 +228,28 @@ export default function App() {
     setIsExisting(true);
     setFoundRecord(recordData);
 
-    // Optional Cloud Sync
-    if (user) {
-      try {
-        const docRef = doc(db, "registrations", cleanSearchVal);
-        const docSnap = await getDoc(docRef);
+    // Cloud Sync
+    try {
+      const docRef = doc(db, "registrations", cleanSearchVal);
+      const docSnap = await getDoc(docRef);
 
-        const payload = { ...recordData };
+      const payload = { ...recordData };
 
-        if (docSnap.exists()) {
-          await setDoc(
-            docRef,
-            { ...payload, updatedAt: Date.now() },
-            { merge: true },
-          );
-        } else {
-          await setDoc(docRef, {
-            ...payload,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-          });
-        }
-      } catch (e: any) {
-        console.error(e);
+      if (docSnap.exists()) {
+        await setDoc(
+          docRef,
+          { ...payload, updatedAt: Date.now() },
+          { merge: true },
+        );
+      } else {
+        await setDoc(docRef, {
+          ...payload,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
       }
+    } catch (e: any) {
+      console.error(e);
     }
   };
 
@@ -404,7 +400,7 @@ export default function App() {
               {user ? (
                 <div className="flex items-center gap-2 bg-emerald-500/10 px-3 py-1.5 rounded-xl border border-emerald-500/20 text-xs text-emerald-400 font-mono">
                   <Cloud className="w-3.5 h-3.5" />
-                  <span>Sincronia Nuvem Ativa</span>
+                  <span>Sincronia Nuvem Ativa {isAdmin && "- Admin"}</span>
                 </div>
               ) : (
                 <button
@@ -412,7 +408,7 @@ export default function App() {
                   className="flex items-center gap-2 bg-blue-500/10 hover:bg-blue-500/20 transition-all px-3 py-1.5 rounded-xl border border-blue-500/20 text-xs text-blue-400 font-mono cursor-pointer"
                 >
                   <LogIn className="w-3.5 h-3.5" />
-                  <span>Conectar Nuvem (Opcional)</span>
+                  <span>Acesso Administrativo</span>
                 </button>
               )}
             </div>
@@ -487,11 +483,13 @@ export default function App() {
             )}
 
             {/* 4. Complete Database Record Listing Table & Actions */}
-            <RegistrationTable
-              database={database}
-              onEditRecord={handleEditFromTable}
-              onDeleteRecord={handleDeleteRecord}
-            />
+            {isAdmin && (
+              <RegistrationTable
+                database={database}
+                onEditRecord={handleEditFromTable}
+                onDeleteRecord={handleDeleteRecord}
+              />
+            )}
           </div>
 
           {/* Guidelines and help panel */}
