@@ -18,17 +18,10 @@ import CSVLoader from "./components/CSVLoader";
 import CPFSearch from "./components/CPFSearch";
 import RegistrationForm from "./components/RegistrationForm";
 import RegistrationTable from "./components/RegistrationTable";
-import { auth, db, googleProvider } from "./firebase";
+import { auth, googleProvider } from "./firebase";
 import { signInWithPopup, onAuthStateChanged, User } from "firebase/auth";
-import {
-  collection,
-  doc,
-  setDoc,
-  deleteDoc,
-  onSnapshot,
-  getDoc,
-  writeBatch,
-} from "firebase/firestore";
+import { supabase } from "./supabase";
+// Realtime and database logic migrated to Supabase
 
 const LOCAL_STORAGE_KEY = "valida_cpf_database_v1";
 const ADMIN_EMAILS = ["j.adilson_bezerra@hotmail.com"];
@@ -87,54 +80,55 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Listen to Firestore real-time updates
+  // Listen to Supabase real-time updates
   useEffect(() => {
-    // Subscribe to registrations
-    const unsubRegistrations = onSnapshot(
-      collection(db, "registrations"),
-      (snapshot) => {
-        const rows: Record<string, string>[] = [];
-        snapshot.forEach((doc) => {
-          // Only include actual data fields
-          const data = doc.data();
-          const { createdAt, updatedAt, ...recordData } = data;
-          rows.push(recordData as Record<string, string>);
-        });
+    const fetchRegistrations = async () => {
+      const { data, error } = await supabase.from("registrations").select("data");
+      if (data) {
+        const rows = data.map((row) => row.data);
+        setDatabase((prev) => ({ ...prev, rows }));
+      } else if (error && error.code !== "42P01") {
+         console.error("Supabase registrations fetch error:", error);
+      }
+    };
 
+    const fetchConfig = async () => {
+      const { data, error } = await supabase
+        .from("app_settings")
+        .select("*")
+        .eq("id", "config")
+        .single();
+      
+      if (data) {
         setDatabase((prev) => ({
           ...prev,
-          rows,
+          headers: data.headers,
+          cpfColumnName: data.cpf_column_name,
         }));
-      },
-      (error) => {
-        console.error("Firestore Error: ", error);
-        alert("Erro ao sincronizar com banco de dados. " + error.message);
-      },
-    );
+      } else if (error && error.code !== "42P01" && error.code !== "PGRST116") {
+         console.error("Supabase config fetch error:", error);
+      }
+    };
 
-    // Subscribe to schema config (headers and cpf column)
-    const unsubConfig = onSnapshot(
-      doc(db, "app_settings", "config"),
-      (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          if (data.headers && data.cpfColumnName) {
-            setDatabase((prev) => ({
-              ...prev,
-              headers: data.headers,
-              cpfColumnName: data.cpfColumnName,
-            }));
-          }
-        }
-      },
-      (error) => {
-        console.error("Config fetch error: ", error);
-      },
-    );
+    fetchRegistrations();
+    fetchConfig();
+
+    const channel = supabase
+      .channel("public-db-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "registrations" },
+        () => fetchRegistrations()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "app_settings" },
+        () => fetchConfig()
+      )
+      .subscribe();
 
     return () => {
-      unsubRegistrations();
-      unsubConfig();
+      supabase.removeChannel(channel);
     };
   }, [user]);
 
@@ -191,7 +185,7 @@ export default function App() {
     // Cloud delete
     if (cpfValue) {
       try {
-        await deleteDoc(doc(db, "registrations", cpfValue));
+        await supabase.from("registrations").delete().eq("cpf", cpfValue);
       } catch (e: any) {
         console.error("Erro ao deletar na nuvem:", e.message);
       }
@@ -230,24 +224,11 @@ export default function App() {
 
     // Cloud Sync
     try {
-      const docRef = doc(db, "registrations", cleanSearchVal);
-      const docSnap = await getDoc(docRef);
-
-      const payload = { ...recordData };
-
-      if (docSnap.exists()) {
-        await setDoc(
-          docRef,
-          { ...payload, updatedAt: Date.now() },
-          { merge: true },
-        );
-      } else {
-        await setDoc(docRef, {
-          ...payload,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        });
-      }
+      await supabase.from("registrations").upsert({
+        cpf: cleanSearchVal,
+        data: recordData,
+        updated_at: Date.now(),
+      });
     } catch (e: any) {
       console.error(e);
     }
@@ -265,15 +246,17 @@ export default function App() {
       setFoundRecord(null);
 
       if (user) {
-        setDoc(
-          doc(db, "app_settings", "config"),
-          {
+        supabase
+          .from("app_settings")
+          .upsert({
+            id: "config",
             headers: DEFAULT_HEADERS,
-            cpfColumnName: "CPF",
-            updatedAt: Date.now(),
-          },
-          { merge: true },
-        ).catch(console.error);
+            cpf_column_name: "CPF",
+            updated_at: Date.now(),
+          })
+          .then(({ error }) => {
+            if (error) console.error(error);
+          });
       }
     }
   };
@@ -306,49 +289,42 @@ export default function App() {
       return;
 
     try {
-      // Chunk batches by 500, since Firestore limits it to 500 writes per batch.
+      // Format rows for Supabase
+      const formattedRows = newDatabase.rows
+        .map((row) => {
+          const cpfValue = cleanCPF(row[newDatabase.cpfColumnName] || "");
+          return { cpf: cpfValue, data: row, updated_at: Date.now() };
+        })
+        .filter((r) => r.cpf && r.cpf.length === 11);
+
+      // Chunk batches by 500
       const chunks = [];
-      for (let i = 0; i < newDatabase.rows.length; i += 500) {
-        chunks.push(newDatabase.rows.slice(i, i + 500));
+      for (let i = 0; i < formattedRows.length; i += 500) {
+        chunks.push(formattedRows.slice(i, i + 500));
       }
 
-      setUploadProgress({ current: 0, total: newDatabase.rows.length });
+      setUploadProgress({ current: 0, total: formattedRows.length });
 
       let processed = 0;
       for (const chunk of chunks) {
-        const batch = writeBatch(db);
-        chunk.forEach((row) => {
-          const cpfValue = cleanCPF(row[newDatabase.cpfColumnName] || "");
-          // Only add to batch if it's considered valid
-          if (cpfValue && cpfValue.length === 11) {
-            const docRef = doc(db, "registrations", cpfValue);
-            batch.set(
-              docRef,
-              { ...row, updatedAt: Date.now() },
-              { merge: true },
-            );
-          }
-        });
-        await batch.commit();
+        const { error } = await supabase.from("registrations").upsert(chunk);
+        if (error) throw error;
         processed += chunk.length;
         setUploadProgress({
           current: processed,
-          total: newDatabase.rows.length,
+          total: formattedRows.length,
         });
       }
 
       setUploadProgress(null);
 
       // Save the schema
-      await setDoc(
-        doc(db, "app_settings", "config"),
-        {
-          headers: newDatabase.headers,
-          cpfColumnName: newDatabase.cpfColumnName,
-          updatedAt: Date.now(),
-        },
-        { merge: true },
-      );
+      await supabase.from("app_settings").upsert({
+        id: "config",
+        headers: newDatabase.headers,
+        cpf_column_name: newDatabase.cpfColumnName,
+        updated_at: Date.now(),
+      });
 
       alert("Sincronização concluída com sucesso!");
     } catch (e: any) {
