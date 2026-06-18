@@ -1,0 +1,20 @@
+{
+  "entities": {
+    "Registration": {
+      "title": "Registration",
+      "description": "A user registration record generated from the CSV data.",
+      "type": "object",
+      "properties": {
+        "createdAt": { "type": "number", "description": "Creation timestamp" },
+        "updatedAt": { "type": "number", "description": "Last update timestamp" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "firestore": {
+    "/registrations/{cpf}": {
+      "schema": { "$ref": "#/entities/Registration" },
+      "description": "Stores user registration records using CPF as the document ID."
+    }
+  }
+}

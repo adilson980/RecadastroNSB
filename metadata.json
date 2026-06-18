@@ -1,0 +1,6 @@
+{
+  "name": "Recadastro de Filiados e Candidatos da NSB",
+  "description": "Sistema para busca, edição, inserção e exportação de registros a partir de um banco de dados em formato CSV, utilizando pesquisa por CPF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

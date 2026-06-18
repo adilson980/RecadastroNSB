@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() { return request.auth != null; }
+    function isValidCpfId(id) { 
+      return id is string && id.size() == 11 && id.matches('^[0-9]+$'); 
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    function isValidRegistration(data) {
+      // Allow dynamic fields, but require basic shape
+      return true;
+    }
+
+    match /app_settings/{document} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.token.email == 'j.adilson_bezerra@hotmail.com';
+    }
+
+    match /registrations/{cpf} {
+      // Must be authenticated to read the list or specific registrations
+      allow read: if isSignedIn();
+      
+      allow create: if isSignedIn() 
+                    && isValidCpfId(cpf) 
+                    && isValidRegistration(incoming());
+      
+      allow update: if isSignedIn()
+                    && isValidCpfId(cpf)
+                    && isValidRegistration(incoming());
+      
+      allow delete: if isSignedIn();
+    }
+  }
+}
